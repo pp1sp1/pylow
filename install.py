@@ -16,19 +16,17 @@ ENTRY_POINT = "pylow.py"
 
 if platform.system() == "Windows":
     INSTALL_DIR = os.path.join(os.environ["USERPROFILE"], ".pylow")
+    VENV_PYTHON = os.path.join(INSTALL_DIR, "venv", "Scripts", "python.exe")
 else:
     INSTALL_DIR = os.path.expanduser("~/.pylow")
+    VENV_PYTHON = os.path.join(INSTALL_DIR, "venv", "bin", "python")
 
 SYSTEM_DEPENDENCIES = {
-    "Linux": [
-        "build-essential",  # Zawiera gcc i g++
-        "clang",            # Zawiera clang i clang++
-        "libllvm19"         # Konkretna wersja biblioteki LLVM
-    ],
+    "Linux": ["build-essential", "clang", "libllvm19", "python3-venv"],
     "Darwin": ["llvm"],
     "Windows": ["LLVM.LLVM"]
 }
-PIP_DEPENDENCIES = ["lief","llvmlite"]
+PIP_DEPENDENCIES = ["lief", "llvmlite"]
 
 def print_status(message, status="INFO"):
     colors = {"INFO": "🔵", "SUCCESS": "🟢", "WARN": "🟡", "ERROR": "🔴", "OK": "✅"}
@@ -43,13 +41,9 @@ def run_cmd(cmd, sudo=False):
     subprocess.run(cmd, check=True)
 
 def install_project():
-    """Downloads the latest code from GitHub Releases or Tags fallback."""
     print_status("Checking for the latest version on GitHub...", "INFO")
+    tag_name, zip_url = None, None
     
-    tag_name = None
-    zip_url = None
-    
-    # 1. Try to fetch from the latest Release API endpoint
     try:
         api_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
         req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -60,7 +54,6 @@ def install_project():
     except Exception:
         print_status("Latest Release endpoint not found. Checking tags fallback...", "WARN")
         
-    # 2. Fallback to Tags API if no Release is found
     if not zip_url:
         try:
             tags_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/tags"
@@ -70,44 +63,53 @@ def install_project():
                 if tags_data:
                     tag_name = tags_data[0]['name']
                     zip_url = tags_data[0]['zipball_url']
-                else:
-                    raise Exception("No tags found in the repository.")
+                else: raise Exception("No tags found.")
         except Exception as e:
-            print_status(f"Authentication or Fetch error: {e}", "ERROR")
-            print_status("Make sure you pushed your tag using: git push origin --tags", "WARN")
+            print_status(f"Fetch error: {e}", "ERROR")
             sys.exit(1)
             
-    print_status(f"Found version/tag: {tag_name}. Downloading source...", "INFO")
+    print_status(f"Found version: {tag_name}. Downloading...", "INFO")
     
-    # 3. Secure download and extraction using system temp directory
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             zip_path = os.path.join(temp_dir, "pylow.zip")
-            
             req = urllib.request.Request(zip_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
                 out_file.write(response.read())
                 
             if os.path.exists(INSTALL_DIR):
+                # Keep venv if exists to speed up, or wipe everything
                 shutil.rmtree(INSTALL_DIR)
             os.makedirs(INSTALL_DIR, exist_ok=True)
             
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                # GitHub archives root directory name format: repo_owner-repo_name-commit_hash
                 top_folder = zip_ref.namelist()[0].split('/')[0]
                 zip_ref.extractall(temp_dir)
-                
                 actual_content_path = os.path.join(temp_dir, top_folder)
                 for item in os.listdir(actual_content_path):
                     shutil.move(os.path.join(actual_content_path, item), INSTALL_DIR)
                     
-        print_status(f"Version {tag_name} successfully installed to {INSTALL_DIR}", "SUCCESS")
-        
+        print_status(f"Source installed to {INSTALL_DIR}", "SUCCESS")
     except Exception as e:
-        print_status(f"Extraction and installation failed: {e}", "ERROR")
-        sys.exit(1)
+        print_status(f"Installation failed: {e}", "ERROR"); sys.exit(1)
 
-def install_dependencies():
+def setup_venv_and_deps():
+    print_status("Setting up virtual environment (venv)...", "INFO")
+    venv_dir = os.path.join(INSTALL_DIR, "venv")
+    
+    try:
+        # Create venv
+        subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+        
+        # Install pip deps inside venv
+        print_status("Installing Python packages inside venv...", "INFO")
+        subprocess.run([VENV_PYTHON, "-m", "pip", "install", "--upgrade", "pip"], check=True)
+        subprocess.run([VENV_PYTHON, "-m", "pip", "install"] + PIP_DEPENDENCIES, check=True)
+        print_status("Python dependencies installed successfully.", "SUCCESS")
+    except Exception as e:
+        print_status(f"Venv setup failed: {e}", "ERROR"); sys.exit(1)
+
+def install_system_dependencies():
     system = platform.system()
     for dep in SYSTEM_DEPENDENCIES.get(system, []):
         if shutil.which(dep) is None:
@@ -117,63 +119,51 @@ def install_dependencies():
                     elif system == "Darwin": run_cmd(["brew", "install", dep])
                     elif system == "Windows": run_cmd(["winget", "install", "-e", "--id", dep])
                 except Exception as e: 
-                    print_status(f"Failed to install system package {dep}: {e}", "ERROR")
-                    
-    if PIP_DEPENDENCIES:
-        print_status("Installing required Python packages...", "INFO")
-        try:
-            run_cmd([sys.executable, "-m", "pip", "install"] + PIP_DEPENDENCIES)
-        except Exception as e:
-            print_status(f"Pip installation failed: {e}", "ERROR")
+                    print_status(f"Failed to install {dep}: {e}", "ERROR")
 
 def setup_global_command():
     system = platform.system()
     script_full_path = os.path.join(INSTALL_DIR, ENTRY_POINT)
     
-    if not os.path.exists(script_full_path):
-        print_status(f"Entrypoint script '{ENTRY_POINT}' not found in source directory.", "ERROR")
-        return
-
     try:
         if system in ["Linux", "Darwin"]:
             bin_path = f"/usr/local/bin/{COMMAND_NAME}"
+            # Tworzymy wrapper, który odpala skrypt używając venv
+            wrapper_content = f'#!/bin/bash\n"{VENV_PYTHON}" "{script_full_path}" "$@"\n'
             
-            # Prepend Shebang if not present
-            with open(script_full_path, 'r+') as f:
-                content = f.read()
-                if not content.startswith("#!"):
-                    f.seek(0, 0)
-                    f.write("#!/usr/bin/env python3\n" + content)
-                    
-            run_cmd(["ln", "-sf", script_full_path, bin_path], sudo=True)
-            run_cmd(["chmod", "+x", script_full_path], sudo=True)
+            with tempfile.NamedTemporaryFile(mode='w', delete=False) as tf:
+                tf.write(wrapper_content)
+                temp_wrapper = tf.name
+            
+            run_cmd(["mv", temp_wrapper, bin_path], sudo=True)
+            run_cmd(["chmod", "+x", bin_path], sudo=True)
             
         elif system == "Windows":
             bat_path = os.path.join(INSTALL_DIR, f"{COMMAND_NAME}.bat")
             with open(bat_path, "w") as bat:
-                bat.write(f"@echo off\npython \"{script_full_path}\" %*")
-            old_path = os.environ.get("PATH", "")
-            if INSTALL_DIR not in old_path:
+                bat.write(f"@echo off\n\"{VENV_PYTHON}\" \"{script_full_path}\" %*")
+            
+            # Add INSTALL_DIR to PATH if not there
+            if INSTALL_DIR not in os.environ.get("PATH", ""):
                 subprocess.run(f'setx PATH "%PATH%;{INSTALL_DIR}"', shell=True)
-                print_status("Added to PATH environment variable. Restart your terminal session!", "WARN")
+                print_status("Restart your terminal to use 'pylow' command.", "WARN")
                 
-        print_status(f"Global executable command '{COMMAND_NAME}' is now configured!", "SUCCESS")
+        print_status(f"Global command '{COMMAND_NAME}' is ready!", "SUCCESS")
     except Exception as e:
-        print_status(f"Configuration failed: {e}", "ERROR")
+        print_status(f"Failed to set global command: {e}", "ERROR")
 
 def main():
-    print("\n🚀 Welcome to the PyLow Installer\n" + "="*35)
-    if not ask_confirmation("Do you want to install PyLow from the latest remote source?"):
-        print_status("Installation aborted by user.", "WARN")
-        sys.exit()
+    print("\n🚀 Welcome to the PyLow Installer (Venv Mode)\n" + "="*40)
+    if not ask_confirmation("Proceed with installation?"): sys.exit()
         
+    install_system_dependencies()
     install_project()
-    install_dependencies()
+    setup_venv_and_deps()
     
-    if ask_confirmation("Do you want to configure the global 'pylow' shell command?"):
+    if ask_confirmation("Do you want to configure the global 'pylow' command?"):
         setup_global_command()
         
-    print("\n✅ Setup Complete! Type 'pylow' in your terminal to begin.")
+    print("\n✅ Setup Complete! Type 'pylow' to start.")
 
 if __name__ == "__main__":
     main()
