@@ -6,8 +6,9 @@ import shutil
 import urllib.request
 import zipfile
 import json
+import tempfile
 
-# --- KONFIGURACJA ---
+# --- CONFIGURATION ---
 REPO_OWNER = "pp1sp1"
 REPO_NAME = "pylow"
 COMMAND_NAME = "pylow"
@@ -38,77 +39,111 @@ def run_cmd(cmd, sudo=False):
     subprocess.run(cmd, check=True)
 
 def install_project():
-    """Pobiera najnowszą wersję z GitHub Releases."""
-    print_status("Sprawdzanie najnowszej wersji w GitHub Releases...", "INFO")
+    """Downloads the latest code from GitHub Releases or Tags fallback."""
+    print_status("Checking for the latest version on GitHub...", "INFO")
     
+    tag_name = None
+    zip_url = None
+    
+    # 1. Try to fetch from the latest Release API endpoint
     try:
-        # 1. Pobranie informacji o najnowszym release z API GitHub
         api_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-        with urllib.request.urlopen(api_url) as response:
+        req = urllib.request.Request(api_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
             data = json.loads(response.read().decode())
             tag_name = data['tag_name']
-            # Link do automatycznego zipa z kodem źródłowym konkretnego taga
             zip_url = f"https://github.com/{REPO_OWNER}/{REPO_NAME}/archive/refs/tags/{tag_name}.zip"
+    except Exception:
+        print_status("Latest Release endpoint not found. Checking tags fallback...", "WARN")
         
-        print_status(f"Znaleziono wersję {tag_name}. Pobieranie...", "INFO")
-        
-        # 2. Pobieranie pliku ZIP
-        zip_path = os.path.join(os.path.dirname(INSTALL_DIR), "pylow_temp.zip")
-        urllib.request.urlretrieve(zip_url, zip_path)
-        
-        # 3. Rozpakowywanie
-        if os.path.exists(INSTALL_DIR):
-            shutil.rmtree(INSTALL_DIR)
+    # 2. Fallback to Tags API if no Release is found
+    if not zip_url:
+        try:
+            tags_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/tags"
+            req = urllib.request.Request(tags_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                tags_data = json.loads(response.read().decode())
+                if tags_data:
+                    tag_name = tags_data[0]['name']
+                    zip_url = tags_data[0]['zipball_url']
+                else:
+                    raise Exception("No tags found in the repository.")
+        except Exception as e:
+            print_status(f"Authentication or Fetch error: {e}", "ERROR")
+            print_status("Make sure you pushed your tag using: git push origin --tags", "WARN")
+            sys.exit(1)
             
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            # GitHub pakuje pliki w folder 'pylow-tagname', musimy to wyciągnąć
-            top_folder = zip_ref.namelist()[0].split('/')[0]
-            zip_ref.extractall(INSTALL_DIR)
+    print_status(f"Found version/tag: {tag_name}. Downloading source...", "INFO")
+    
+    # 3. Secure download and extraction using system temp directory
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zip_path = os.path.join(temp_dir, "pylow.zip")
             
-            # Przenosimy zawartość z folderu 'pylow-xxx' bezpośrednio do INSTALL_DIR
-            actual_content_path = os.path.join(INSTALL_DIR, top_folder)
-            for item in os.listdir(actual_content_path):
-                shutil.move(os.path.join(actual_content_path, item), INSTALL_DIR)
-            os.rmdir(actual_content_path)
+            req = urllib.request.Request(zip_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
+                out_file.write(response.read())
+                
+            if os.path.exists(INSTALL_DIR):
+                shutil.rmtree(INSTALL_DIR)
+            os.makedirs(INSTALL_DIR, exist_ok=True)
             
-        os.remove(zip_path)
-        print_status(f"Wersja {tag_name} została zainstalowana w {INSTALL_DIR}", "SUCCESS")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                # GitHub archives root directory name format: repo_owner-repo_name-commit_hash
+                top_folder = zip_ref.namelist()[0].split('/')[0]
+                zip_ref.extractall(temp_dir)
+                
+                actual_content_path = os.path.join(temp_dir, top_folder)
+                for item in os.listdir(actual_content_path):
+                    shutil.move(os.path.join(actual_content_path, item), INSTALL_DIR)
+                    
+        print_status(f"Version {tag_name} successfully installed to {INSTALL_DIR}", "SUCCESS")
         
     except Exception as e:
-        print_status(f"Błąd podczas pobierania z Releases: {e}", "ERROR")
-        print_status("Upewnij się, że stworzyłeś 'Release' w swoim repozytorium na GitHubie!", "WARN")
+        print_status(f"Extraction and installation failed: {e}", "ERROR")
         sys.exit(1)
-
-# --- Reszta funkcji (install_dependencies, setup_global_command, main) zostaje bez zmian jak w poprzednim kodzie ---
-# (Tutaj wstaw funkcje z poprzedniej odpowiedzi)
 
 def install_dependencies():
     system = platform.system()
     for dep in SYSTEM_DEPENDENCIES.get(system, []):
         if shutil.which(dep) is None:
-            if ask_confirmation(f"Brak {dep}. Zainstalować?"):
+            if ask_confirmation(f"Missing system dependency: '{dep}'. Install it now?"):
                 try:
                     if system == "Linux": run_cmd(["apt-get", "install", "-y", dep], sudo=True)
                     elif system == "Darwin": run_cmd(["brew", "install", dep])
                     elif system == "Windows": run_cmd(["winget", "install", "-e", "--id", dep])
-                except Exception as e: print_status(f"Błąd {dep}: {e}", "ERROR")
+                except Exception as e: 
+                    print_status(f"Failed to install system package {dep}: {e}", "ERROR")
+                    
     if PIP_DEPENDENCIES:
-        print_status("Instalowanie bibliotek Python...", "INFO")
-        run_cmd([sys.executable, "-m", "pip", "install"] + PIP_DEPENDENCIES)
+        print_status("Installing required Python packages...", "INFO")
+        try:
+            run_cmd([sys.executable, "-m", "pip", "install"] + PIP_DEPENDENCIES)
+        except Exception as e:
+            print_status(f"Pip installation failed: {e}", "ERROR")
 
 def setup_global_command():
     system = platform.system()
     script_full_path = os.path.join(INSTALL_DIR, ENTRY_POINT)
+    
+    if not os.path.exists(script_full_path):
+        print_status(f"Entrypoint script '{ENTRY_POINT}' not found in source directory.", "ERROR")
+        return
+
     try:
         if system in ["Linux", "Darwin"]:
             bin_path = f"/usr/local/bin/{COMMAND_NAME}"
+            
+            # Prepend Shebang if not present
             with open(script_full_path, 'r+') as f:
                 content = f.read()
                 if not content.startswith("#!"):
                     f.seek(0, 0)
                     f.write("#!/usr/bin/env python3\n" + content)
+                    
             run_cmd(["ln", "-sf", script_full_path, bin_path], sudo=True)
             run_cmd(["chmod", "+x", script_full_path], sudo=True)
+            
         elif system == "Windows":
             bat_path = os.path.join(INSTALL_DIR, f"{COMMAND_NAME}.bat")
             with open(bat_path, "w") as bat:
@@ -116,20 +151,25 @@ def setup_global_command():
             old_path = os.environ.get("PATH", "")
             if INSTALL_DIR not in old_path:
                 subprocess.run(f'setx PATH "%PATH%;{INSTALL_DIR}"', shell=True)
-                print_status("Dodano do PATH. Zrestartuj terminal!", "WARN")
-        print_status(f"Komenda '{COMMAND_NAME}' skonfigurowana globalnie!", "SUCCESS")
+                print_status("Added to PATH environment variable. Restart your terminal session!", "WARN")
+                
+        print_status(f"Global executable command '{COMMAND_NAME}' is now configured!", "SUCCESS")
     except Exception as e:
-        print_status(f"Błąd konfiguracji: {e}", "ERROR")
+        print_status(f"Configuration failed: {e}", "ERROR")
 
 def main():
-    print("\n🚀 Witamy w instalatorze PyLow\n" + "="*30)
-    if not ask_confirmation("Czy chcesz zainstalować PyLow z najnowszej wersji (Releases)?"):
+    print("\n🚀 Welcome to the PyLow Installer\n" + "="*35)
+    if not ask_confirmation("Do you want to install PyLow from the latest remote source?"):
+        print_status("Installation aborted by user.", "WARN")
         sys.exit()
+        
     install_project()
     install_dependencies()
-    if ask_confirmation("Czy chcesz dodać komendę 'pylow' do terminala?"):
+    
+    if ask_confirmation("Do you want to configure the global 'pylow' shell command?"):
         setup_global_command()
-    print("\n✅ Instalacja zakończona! Wpisz 'pylow', aby zacząć.")
+        
+    print("\n✅ Setup Complete! Type 'pylow' in your terminal to begin.")
 
 if __name__ == "__main__":
     main()
