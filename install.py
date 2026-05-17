@@ -20,11 +20,15 @@ else:
     INSTALL_DIR = os.path.expanduser("~/.pylow")
 
 SYSTEM_DEPENDENCIES = {
-    "Linux": ["build-essential", "cmake", "git"],
-    "Darwin": ["cmake", "git"],
-    "Windows": ["git", "cmake"]
+    "Linux": [
+        "build-essential",  # Zawiera gcc i g++
+        "clang",            # Zawiera clang i clang++
+        "libllvm19"         # Konkretna wersja biblioteki LLVM
+    ],
+    "Darwin": ["llvm"],
+    "Windows": ["LLVM.LLVM"]
 }
-PIP_DEPENDENCIES = ["colorama"]
+PIP_DEPENDENCIES = ["lief","llvmlite"]
 
 def print_status(message, status="INFO"):
     colors = {"INFO": "🔵", "SUCCESS": "🟢", "WARN": "🟡", "ERROR": "🔴", "OK": "✅"}
