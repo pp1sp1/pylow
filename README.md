@@ -28,14 +28,14 @@ Installation has been streamlined into a single, smart command that configures t
 ### 🐧 Linux / 🍎 macOS
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/pp1sp1/pylow/main/bootstrap.sh | bash
+curl -sSL https://raw.githubusercontent.com/pp1sp1/pylow/main/install.sh | bash
 
 ```
 
 ### 🪟 Windows (PowerShell)
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/pp1sp1/pylow/main/bootstrap.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/pp1sp1/pylow/main/install.ps1 | iex
 
 ```
 
