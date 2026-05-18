@@ -472,6 +472,11 @@ class VisitorsStmtMixin:
                                  class_name=val.class_name if hasattr(val, 'class_name') and val.class_name else None)
                     vi.is_class_ref = is_cls_ref_before_box or self._is_class_ref_value(val)
                     self.sym.define(name, vi)
+                    # NAPRAWA: Synchronizuj z nonlocal LLVM global, jeśli istnieje
+                    nl_gvar_name = f"__nonlocal_{name}"
+                    if nl_gvar_name in self.module.globals:
+                        nl_gv = self.module.globals[nl_gvar_name]
+                        self.builder.store(new_val, nl_gv)
                     return
                 elif pre_alloca_info[0] == 'alloca':
                     # Zmienna z pre-alloca w entry blocku
@@ -497,6 +502,12 @@ class VisitorsStmtMixin:
                         self.sym.lookup(name).is_class_ref = True
                     if hasattr(val, 'class_name') and val.class_name:
                         self.sym.lookup(name).class_name = val.class_name
+                    # NAPRAWA: Synchronizuj z nonlocal LLVM global, jeśli istnieje
+                    nl_gvar_name = f"__nonlocal_{name}"
+                    if nl_gvar_name in self.module.globals:
+                        nl_gv = self.module.globals[nl_gvar_name]
+                        new_val_for_nl = val.llvm if val.is_object else self._box(val)
+                        self.builder.store(new_val_for_nl, nl_gv)
                     return
 
             # Standardowa ścieżka (bez pre-alloca)

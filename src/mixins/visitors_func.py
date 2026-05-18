@@ -382,10 +382,25 @@ class VisitorsFuncMixin:
             # Sprawdź czy LLVM global istnieje (zmienna modułowa)
             gvar_name = f"__global_{var_name}"
             has_gvar = gvar_name in self.module.globals
+            # NAPRAWA: Sprawdź czy istnieje __nonlocal_ global — jeśli tak,
+            # zmienna musi być BOXED_PTR (OBJECT), żeby nonlocal fallback
+            # w visit_Name mógł ją odczytać po modyfikacji przez inner function.
+            nl_gvar_name = f"__nonlocal_{var_name}"
+            has_nl_gvar = nl_gvar_name in self.module.globals
             if has_gvar:
                 # Dla zmiennych z LLVM global, używamy globala jako storage
                 gv = self.module.globals[gvar_name]
                 self._pre_allocas[var_name] = ('global', gv)
+            elif has_nl_gvar:
+                # NAPRAWA: Zmienna z __nonlocal_ global musi być OBJECT (BOXED_PTR),
+                # żeby visit_Name mógł użyć nonlocal fallback do odczytu zmienionej
+                # wartości po wywołaniu inner function. Bez tego zmienna jest INT
+                # i outer function nigdy nie widzi zmian dokonanych przez inner.
+                llvm_type = BOXED_PTR
+                inferred = PyType.OBJECT
+                alloca = self.builder.alloca(llvm_type, name=var_name)
+                self.builder.store(ir.Constant(BOXED_PTR, None), alloca)
+                self._pre_allocas[var_name] = ('alloca', alloca, llvm_type, inferred)
             else:
                 # Określ typ na podstawie type inference
                 inferred = PyType.OBJECT

@@ -321,9 +321,13 @@ class BuiltinsMixin:
             fn = ir.Function(self.module, fty, name="fgets")
             self.functions["fgets"] = fn
 
+        # NAPRAWA: stdin to FILE* (wskaźnik), nie pusty struct.
+        # Deklarujemy go jako extern global I8P, co daje poprawny
+        # wskaźnik FILE* po bitcast/-load.  Poprzedni kod używał
+        # LiteralStructType([]) (rozmiar 0 bajtów), co powodowało
+        # segfault w fgets, bo dostawał zły wskaźnik.
         if "stdin" not in self.module.globals:
-            stdin_ty = ir.LiteralStructType([])
-            stdin = ir.GlobalVariable(self.module, stdin_ty, "stdin")
+            stdin = ir.GlobalVariable(self.module, I8P, "stdin")
             stdin.linkage = "external"
 
         # Bufor na input
@@ -335,21 +339,89 @@ class BuiltinsMixin:
             prompt = self.val_to_str(args[0])
             self._print_string(prompt)
 
-        # Wywołaj fgets
+        # Wywołaj fgets — load stdin (FILE** → FILE*) i przekaż do fgets
         stdin_ptr = self.module.globals["stdin"]
-        stdin_i8p = self.builder.bitcast(stdin_ptr, I8P)
+        stdin_val = self.builder.load(stdin_ptr, "stdin_val")
         self.builder.call(
-            self.functions["fgets"], [buf, ir.Constant(I32, buf_size), stdin_i8p]
+            self.functions["fgets"], [buf, ir.Constant(I32, buf_size), stdin_val]
         )
 
-        # Oblicz długość
-        len_val = (
-            self.builder.call(self.functions["strlen"], [buf], "input_len")
-            if "strlen" in self.functions
-            else ir.Constant(I64, 0)
+        # Oblicz długość (fgets zachowuje \n, CPython input() go usuwa)
+        if "strlen" not in self.functions:
+            fty = ir.FunctionType(I64, [I8P])
+            fn = ir.Function(self.module, fty, name="strlen")
+            self.functions["strlen"] = fn
+        len_val = self.builder.call(self.functions["strlen"], [buf], "input_len")
+
+        # NAPRAWA: Usuń końcowy \n — CPython input() go obcina.
+        # Jeśli ostatni znak to '\n', zamień go na '\0' i zmniejsz długość.
+        # Najpierw sprawdź czy len > 0.
+        len_alloca = self.builder.alloca(I64, name="input_len_a")
+        self.builder.store(len_val, len_alloca)
+
+        strip_bb = self.current_func.append_basic_block("input.strip_chk")
+        skip_bb = self.current_func.append_basic_block("input.strip_skip")
+        done_bb = self.current_func.append_basic_block("input.strip_done")
+
+        cur_len = self.builder.load(len_alloca, "cur_len")
+        self.builder.cbranch(
+            self.builder.icmp_signed(">", cur_len, ir.Constant(I64, 0)),
+            strip_bb, skip_bb
         )
 
-        return self._create_str_object(buf, len_val, ir.Constant(I64, buf_size))
+        self.builder.position_at_end(strip_bb)
+        # Wskaźnik na ostatni znak: buf + len - 1
+        last_idx = self.builder.sub(cur_len, ir.Constant(I64, 1), "last_idx")
+        last_char_ptr = self.builder.gep(buf, [last_idx], inbounds=True, name="last_char_ptr")
+        last_char = self.builder.load(last_char_ptr, "last_char")
+        is_newline = self.builder.icmp_signed("==", last_char, ir.Constant(I8, ord('\n')), "is_newline")
+
+        strip_yes_bb = self.current_func.append_basic_block("input.strip_yes")
+        self.builder.cbranch(is_newline, strip_yes_bb, skip_bb)
+
+        self.builder.position_at_end(strip_yes_bb)
+        # Zamień '\n' na '\0' i zmniejsz długość
+        self.builder.store(ir.Constant(I8, 0), last_char_ptr)
+        new_len = self.builder.sub(cur_len, ir.Constant(I64, 1), "new_len")
+        self.builder.store(new_len, len_alloca)
+        self.builder.branch(skip_bb)
+
+        self.builder.position_at_end(skip_bb)
+        self.builder.branch(done_bb)
+
+        self.builder.position_at_end(done_bb)
+        final_len = self.builder.load(len_alloca, "final_input_len")
+
+        # NAPRAWA: Zamiast _create_str_object (które nadpisuje bufor
+        # wejściowy nagłówkiem GC i alokuje pusty data_buf bez kopiowania),
+        # tworzymy string object poprawnie: osobny malloc na obiekt,
+        # osobny malloc na data_buf, i memcpy z bufora wejściowego.
+        raw = self.builder.call(self._malloc, [ir.Constant(I64, SZ_STR)], name="input_str_raw")
+        str_obj = self.builder.bitcast(raw, STR_PTR, name="input_str_obj")
+
+        # GC header
+        null_i8p = ir.Constant(I8P, None)
+        self.builder.store(ir.Constant(I64, 1), self.builder.gep(str_obj, [z, ir.Constant(I32, 0), ir.Constant(I32, 0)], inbounds=True))
+        self.builder.store(ir.Constant(I32, 0), self.builder.gep(str_obj, [z, ir.Constant(I32, 0), ir.Constant(I32, 1)], inbounds=True))
+        self.builder.store(ir.Constant(I64, 0), self.builder.gep(str_obj, [z, ir.Constant(I32, 0), ir.Constant(I32, 2)], inbounds=True))
+        self.builder.store(null_i8p, self.builder.gep(str_obj, [z, ir.Constant(I32, 0), ir.Constant(I32, 3)], inbounds=True))
+
+        # len i cap
+        self.builder.store(final_len, self.builder.gep(str_obj, [z, ir.Constant(I32, 1)], inbounds=True))
+        cap_val = self.builder.add(final_len, ir.Constant(I64, 1), "input_cap")
+        self.builder.store(cap_val, self.builder.gep(str_obj, [z, ir.Constant(I32, 2)], inbounds=True))
+
+        # Alokuj data_buf i skopiuj dane z bufora wejściowego
+        data_buf = self.builder.call(self._malloc, [cap_val], name="input_data_buf")
+        if "memcpy" not in self.functions:
+            fty = ir.FunctionType(I8P, [I8P, I8P, I64])
+            fn = ir.Function(self.module, fty, name="memcpy")
+            self.functions["memcpy"] = fn
+        self.builder.call(self.functions["memcpy"], [data_buf, buf, cap_val])
+
+        self.builder.store(data_buf, self.builder.gep(str_obj, [z, ir.Constant(I32, 3)], inbounds=True))
+
+        return Value(str_obj, PyType.STR)
 
     def _handle_builtin_zip(self, node: ast.Call) -> Value:
         if not node.args:
