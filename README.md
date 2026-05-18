@@ -46,7 +46,7 @@ bash -c "$(curl -sSL https://raw.githubusercontent.com/pp1sp1/pylow/main/install
 After installation, the compiler is available globally in your terminal:
 
 ```bash
-pylow twoj_projekt.py
+pylow your_file.py
 
 ```
 
