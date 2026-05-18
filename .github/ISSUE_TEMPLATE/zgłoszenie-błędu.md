@@ -1,9 +1,9 @@
 ---
-name: Bug report
+name: Zgłoszenie Błędu
 about: Zgłoś błąd kompilatora (ICE, błędna optymalizacja lub nieprawidłowy błąd)
-title: '[Komponent] Krótki opis problemu'
-labels: 'bug'
-assignees: ''
+title: "[Komponent] Krótki opis problemu"
+labels: bug
+assignees: pp1sp1
 
 ---
 
@@ -61,4 +61,3 @@ Jasny i zwięzły opis błędu kompilatora.
 * **Czy to regresja?** (Czy błąd występował w poprzednich wersjach Twojego kodu?)
 * **Wyniki z narzędzi diagnostycznych:** (Logi z wewnętrznych warstw kompilatora, jeśli są dostępne).
 * Wszelkie inne uwagi dotyczące fazy kompilacji (frontend, generowanie kodu pośredniego, optymalizacje), w której podejrzewasz problem.
-

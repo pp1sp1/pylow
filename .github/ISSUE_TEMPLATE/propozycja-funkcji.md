@@ -1,8 +1,8 @@
 ---
-name: Feature request
+name: Propozycja Funkcji
 about: Zaproponuj nowy pomysł lub usprawnienie architektoniczne dla kompilatora
-title: '[Feature] Krótki opis proponowanej funkcji'
-labels: 'enhancement'
+title: "[Feature] Krótki opis proponowanej funkcji"
+labels: enhancement
 assignees: ''
 
 ---
@@ -47,4 +47,3 @@ Jasny i zwięzły opis alternatywnych rozwiązań, projektów lub istniejących 
 ## 🔍 Dodatkowy kontekst
 
 Dodaj tutaj wszelkie inne informacje, linki do dokumentacji technicznej, artykuły naukowe lub notatki projektowe dotyczące tej funkcji.
-

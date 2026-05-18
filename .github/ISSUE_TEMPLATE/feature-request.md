@@ -1,8 +1,8 @@
 ---
 name: Feature request
 about: Suggest an idea or architectural improvement for the compiler
-title: '[Feature] Short description of the proposed feature'
-labels: 'enhancement'
+title: "[Feature] Short description of the proposed feature"
+labels: enhancement
 assignees: ''
 
 ---

@@ -1,8 +1,8 @@
 ---
 name: Bug report
 about: Report a compiler bug (ICE, miscompilation, or incorrect error)
-title: '[Component] Short description of the issue'
-labels: 'bug'
+title: "[Component] Short description of the issue"
+labels: bug
 assignees: ''
 
 ---
