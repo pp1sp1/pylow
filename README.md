@@ -35,7 +35,7 @@ bash -c "$(curl -sSL https://raw.githubusercontent.com/pp1sp1/pylow/main/install
 ### 🪟 Windows (PowerShell)
 
 ```powershell
-& (iwr -useb https://raw.githubusercontent.com/pp1sp1/pylow/main/install.ps1)
+iwr -useb https://raw.githubusercontent.com/pp1sp1/pylow/main/install.ps1 | iex
 
 ```
 
