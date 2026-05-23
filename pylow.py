@@ -9,6 +9,7 @@ import os
 import subprocess
 import sysconfig
 from pathlib import Path
+import platform
 
 build_dir = "build"
 
@@ -567,12 +568,22 @@ def main():
 
     if cc_available:
         libs_to_link = []
-        if args["libs_mode"] == "static":
-            libs_to_link = ["-lm", "-lrt"]
-        if "math" in args["libs"]:
+        is_windows = platform.system() == "Windows"
+
+        # 1. Obsługa biblioteki matematycznej
+        if args["libs_mode"] == "static" or "math" in args["libs"]:
             libs_to_link.append("-lm")
-        if "time" in args["libs"]:
-            libs_to_link.append("-lrt")
+
+        # 2. Obsługa biblioteki czasu rzeczywistego (tylko dla Linux/POSIX)
+        if "time" in args["libs"] or (args["libs_mode"] == "static" and not is_windows):
+            if not is_windows:
+                libs_to_link.append("-lrt")
+            # Na Windows funkcje czasu są w standardowym API, nie dodajemy -lrt!
+
+        # 3. Flagi specyficzne dla Windowsa (MinGW / clang pod Windows)
+        if is_windows:
+            # -lwinmm zapewnia obsługę systemowych timerów multimedialnych na Windows
+            libs_to_link.append("-lwinmm")
 
         from src.ffi.core import has_cpython_extensions
         _ffi_modules = getattr(compiler, '_ffi_modules', {})
