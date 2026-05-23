@@ -24,7 +24,7 @@ else:
 SYSTEM_DEPENDENCIES = {
     "Linux": ["build-essential", "clang", "libllvm19", "python3-venv"],
     "Darwin": ["llvm"],
-    "Windows": ["LLVM.LLVM"]
+    "Windows": ["LLVM.LLVM","MartinStorsjo.LLVM-MinGW.UCR"]
 }
 PIP_DEPENDENCIES = ["lief", "llvmlite"]
 
