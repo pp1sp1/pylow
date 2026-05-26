@@ -4,6 +4,20 @@
 **PyLow** is an ambitious compiler project aimed at completely eliminating the trade-off between the ease of writing Python and the performance of low-level languages.
 
 PyLow is not just another interpreter or virtual layer. It is a tool that transforms Python code directly into high-performance machine code using the **LLVM** infrastructure.
+## 📜 License
+
+**PyLow** is licensed under the **GNU General Public License version 3 (GPLv3)**  
+with an additional **PyLow Compiler Output Exception**.
+
+### What does this mean in practice?
+
+- You are free to use PyLow to compile your Python projects, including **commercial** and **proprietary** (closed-source) applications.
+- The code **generated** by PyLow (binaries, executables, libraries, etc.) can be distributed under **any license** you choose — including fully closed-source and commercial licenses.
+- However, if you modify the PyLow compiler itself and distribute the modified version, you must release your modifications under the GPLv3 license (or a later version).
+
+This exception is designed to allow maximum flexibility for developers and companies using PyLow as a compilation tool, while still protecting the open-source nature of the compiler itself.
+
+You can find the full license text in the [`LICENSE`](LICENSE) file in this repository.
 
 ## 🌟 Project Vision
 
